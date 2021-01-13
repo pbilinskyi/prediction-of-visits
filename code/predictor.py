@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 
 n_days = 1099
-n_weeks = (n_days // 7) if (n_days % 7 == 0) else (n_days // 7 + 1)
+days_in_week = 7
+n_weeks = (n_days // days_in_week) if (n_days % days_in_week == 0) else (n_days // days_in_week + 1)
 
 
 def parse_visits(df, ind):
@@ -12,20 +13,30 @@ def parse_visits(df, ind):
     return visits
 
 
-def drop_empty_weeks(V):
-    for i in V.index:
-        if not np.any(V.loc[i, :]):
-            V = V.drop(i)
-    return V
+# def drop_empty_weeks(V):
+#     for i in V.index:
+#         if not np.any(V.loc[i, :]):
+#             V = V.drop(i)
+#     return V
 
 
 def make_visit_matrix(visits):
-    V = np.zeros(shape=(n_weeks, 7), dtype=int)
+    '''
+    :param visits: array with days of visit
+    :return: V, matrix of visits
+             V_test, matrix for testing
+    '''
+    V = np.zeros(shape=(n_weeks, days_in_week), dtype=int)
     for day in visits:
-        V[(day - 1) // 7, (day - 1) % 7] = 1
+        V[(day - 1) // days_in_week, (day - 1) % days_in_week] = 1
     V = pd.DataFrame(V, columns=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
     V.index = V.index + 1
-    return V.iloc[:-1], V.iloc[-1]
+    # drop empty weeks
+    for i in V.index:
+        if not np.any(V.loc[i, :]):
+            V = V.drop(i)
+
+    return V.iloc[1:], V.iloc[0]
 
 
 def is_true_prediction(V_test, predicted_day):
@@ -33,8 +44,12 @@ def is_true_prediction(V_test, predicted_day):
 
 
 class Predictor:
+    class_info = "Interface for predictors"
+    learning_curve = None
 
     def __init__(self, lambd=0.985, gamma=0.25):
+        self.learning_curve_x = []
+        self.learning_curve_y = []
         # precomute weights
         weeks = range(1, n_weeks + 1)
         self.w_lin = np.array([(n_weeks - i - 1) / n_weeks for i in weeks])
@@ -56,26 +71,38 @@ class Predictor:
 
     @staticmethod
     def compute_p_(V, w):
+        w_sum = 0
         for ind in V.index:
-            V.loc[ind, :] *= w[ind]
-        p = V.sum(axis=0)
-        p_ = np.zeros(7)
-        for i in range(7):
+            V.loc[ind] *= w[ind - 1]
+            w_sum += w[ind - 1]
+        p = V.sum(axis=0) / w_sum
+        p_ = np.zeros(days_in_week)
+        for i in range(days_in_week):
             p_[i] = (1 - p[:i]).prod() * p[i]
         return p_
 
     def fit_and_predict(self, df):
-        self.predictions = pd.Series(index=df.index)
+        n_customers = df.shape[0]
+        # self.predictions = pd.Series(index=df.index)
         self.score = 0
         for ind in df.index:
             visits = parse_visits(df, ind)
             V, V_test = make_visit_matrix(visits)
-            V = drop_empty_weeks(V)
-
+            # V = drop_empty_weeks(V)
             predicted_day = self.predict(V)
-            self.predictions.loc[ind] = predicted_day
+            # self.predictions.loc[ind] = predicted_day
             self.score += is_true_prediction(V_test, predicted_day)
-        self.score /= df.shape[0]
+            if ind % 100 == 0:
+                self.learning_curve_x.append(ind)
+                self.learning_curve_y.append(self.score / ind)
+                print(f'\t{ind}, score = {self.score / ind}')
+
+        self.score /= n_customers
+        self.learning_curve_x.append(n_customers)
+        self.learning_curve_y.append(self.score)
+
+    def get_learning_curve(self):
+        return self.learning_curve_x, self.learning_curve_y
 
     def get_score(self):
         return self.score
@@ -89,6 +116,8 @@ class Predictor:
 
 
 class WeightedProbPredictor(Predictor):
+    class_info = "Prediction as arg max of weighted probabilities"
+
     def predict(self, V):
         w = self.get_weights()
         p_ = self.compute_p_(V, w)
@@ -97,9 +126,28 @@ class WeightedProbPredictor(Predictor):
 
 
 class RandomPredictor(Predictor):
+    class_info = "Random guessing"
     random_state = 142
 
     def predict(self, V):
         rng = np.random.default_rng(self.random_state)
-        predicted_day = int(np.floor(rng.uniform(0, 7.99)))
+        predicted_day = int(np.floor(rng.uniform(0, days_in_week + 0.99)))
         return predicted_day
+
+
+class WeightedProbPredictor2(WeightedProbPredictor):
+    @staticmethod
+    def compute_p_(V, w):
+        # delete all visits in each week, except first
+        for ind in V.index:
+            flag = True
+            w_sum = 0
+            for i in V.columns:
+                if (V.loc[ind, i] == 1) and flag:
+                    V.loc[ind] = 0
+                    V.loc[ind, i] = w[ind - 1]
+                    w_sum += w[ind - 1]
+
+        p_ = V.sum(axis=0) / w_sum
+        return p_
+
