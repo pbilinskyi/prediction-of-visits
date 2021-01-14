@@ -47,7 +47,7 @@ class Predictor:
     class_info = "Interface for predictors"
     learning_curve = None
 
-    def __init__(self, weight_profile='lin', lambd=0.985, gamma=0.25):
+    def __init__(self, weight_profile='lin', lambd=0.9, gamma=0.4):
         self.weight_profile = weight_profile
         self.lambd = lambd
         self.gamma = gamma
@@ -115,10 +115,10 @@ class Predictor:
             V, V_test = make_visit_matrix(visits)
             predicted_day = self.predict(V)
             self.score += is_true_prediction(V_test, predicted_day)
-            if (i + 1) % 100 == 0:
+            if (i + 1) % 50 == 0:
                 self.learning_curve_x.append(i + 1)
                 self.learning_curve_y.append(self.score / (i + 1))
-                print(f'\t{i + 1}, score = {self.score / (i + 1)}')
+                # print(f'\t{i + 1}, score = {self.score / (i + 1)}')
 
         self.score /= n_customers
         self.learning_curve_x.append(n_customers)
@@ -186,6 +186,7 @@ class Ensemble(WeightedProbPredictor):
 
 
 class FastWPP(Predictor):
+    class_info = "Fast WPP 1"
 
     def fit_and_predict(self, df):
         n_customers = df.shape[0]
@@ -199,7 +200,7 @@ class FastWPP(Predictor):
             if (i + 1) % 100 == 0:
                 self.learning_curve_x.append((i+1))
                 self.learning_curve_y.append(self.score / (i+1))
-                print(f'\t{i + 1}, score = {self.score / (i + 1)}')
+                # print(f'\t{i + 1}, score = {self.score / (i + 1)}')
         self.score /= n_customers
         self.learning_curve_x.append(n_customers)
         self.learning_curve_y.append(self.score)
@@ -208,8 +209,7 @@ class FastWPP(Predictor):
         p_ = self.predict_prob(visits)
         return np.argmax(p_)
 
-    @staticmethod
-    def predict_prob(visits):
+    def predict_prob(self, visits):
         from copy import copy
         # find number of different weeks
         d_cur = visits[0]
@@ -223,9 +223,10 @@ class FastWPP(Predictor):
             num_of_week[d] = n_weeks
 
         # compute weights
-        weeks = range(1, n_weeks + 1)
-        w = np.array([(n_weeks - i + 1) / n_weeks for i in weeks])
-        w = w / w.sum()
+        w = self.get_weights(length=n_weeks)
+        # weeks = range(1, n_weeks + 1)
+        # w = np.array([(n_weeks - i + 1) / n_weeks for i in weeks])
+        # w = w / w.sum()
 
         # compute p
         p = np.zeros(days_in_week)
